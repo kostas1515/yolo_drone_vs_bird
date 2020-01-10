@@ -138,7 +138,7 @@ def yolo_loss(output,target):
     output should have the size [bboxes,(tx,ty,tw.th,Confidence,class_i)]
     '''
 
-    #box size has to be torch.Size([1, grid*grid*anchors, 6])
+    #box size has to be torch.Size([1, grid*grid*anchors, 85])
     anchors=3#remove that make it generic
     box0=output[:,:,:].squeeze(-3)# this removes the first dimension, maybe will have to change
 
@@ -148,12 +148,12 @@ def yolo_loss(output,target):
     confidence_loss=0
     total_loss=0
 
-    #target must have size ---> torch.Size([1, obj, ])
+    #target must have size ---> torch.Size([1, obj, 85])
     #obj #torch.Size([85])
     for obj in target[0]:
         target_index=obj[0:2]# use target index to create a mask
         
-        mask=get_mask(target_index,13,416,3) #these are the dimensions of grid and image
+        mask=get_mask(target_index,17,544,3) #these are the dimensions of grid and image
 
 
         box1=box0[mask,:]
@@ -165,22 +165,22 @@ def yolo_loss(output,target):
         target_box=target_box.type(torch.float)
 
         target_box=get_abs_coord(target_box)
-        iou=bbox_iou(target_box,absolute_box)
 
+        iou=bbox_iou(target_box,absolute_box)
         iou_mask=iou.max() == iou
         box1=box1[iou_mask,:]
         iou_value=iou.max()
 
-        if (box1.shape[0]!=1): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
-            box1=box1[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
+        if (iou_value==0): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
+            box1=box1[0]
         else:
-            box1=box1.squeeze(-2) #torch.Size([6])
+            box1=box1.squeeze(-2) #torch.Size([85])
 
         try:
             wh_loss=wh_loss+(obj[2]**(1/2)-box1[2]**(1/2))**2 + (obj[3]**(1/2)-box1[3]**(1/2))**2
         except IndexError:
-            print(obj,box0)
-
+            print(obj)
+            print(box0)
 
 
             
