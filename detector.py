@@ -12,27 +12,43 @@ import timeit
 df = pd.read_csv('../annotations.csv')
 
 net = Darknet("../cfg/yolov3.cfg")
+
+'''
+when loading weights from dataparallel model then, you first need to instatiate the dataparallel model 
+if you start fresh then first model.load_weights and then make it parallel
+'''
 try:
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    # Assuming that we are on a CUDA machine, this should print a CUDA device:
+    print(device)
+    net.to(device)
+
+    if torch.cuda.device_count() > 1:
+      print("Using ", torch.cuda.device_count(), "GPUs!")
+      model = nn.DataParallel(net)
+
+    model.to(device)
+    
     PATH = './darknet.pth'
-    net = torch.load(PATH)
-except FileNotFoundError:
+    weights = torch.load(PATH)
+    model.load_state_dict(weights)
+except FileNotFoundError: 
     net.load_weights("../yolov3.weights")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # Assuming that we are on a CUDA machine, this should print a CUDA device:
 
-# Assuming that we are on a CUDA machine, this should print a CUDA device:
+    print(device)
+    net.to(device)
+    if torch.cuda.device_count() > 1:
+      print("Using ", torch.cuda.device_count(), "GPUs!")
+      model = nn.DataParallel(net)
 
-print(device)
+    model.to(device)
+    
 
-net.to(device)
 
-
-if torch.cuda.device_count() > 1:
-  print("Using ", torch.cuda.device_count(), "GPUs!")
-  # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-  model = nn.DataParallel(net)
-
-model.to(device)
 
 
 optimizer = optim.Adam(model.parameters(), lr=0.00001)
