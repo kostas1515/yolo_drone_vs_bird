@@ -141,7 +141,9 @@ def yolo_loss(output,target):
     #box size has to be torch.Size([1, grid*grid*anchors, 6])
     anchors=3#remove that make it generic
     box0=output[:,:,:].squeeze(-3)# this removes the first dimension, maybe will have to change
-
+    
+    box0[box0.ne(box0)] = 0 # this substitute all nan with 0
+    
     xy_loss=0
     wh_loss=0
     class_loss=0
@@ -157,6 +159,7 @@ def yolo_loss(output,target):
 
 
         box1=box0[mask,:]
+        
 
         #box2 contains absolute coordinates
         absolute_box=get_abs_coord(box1[:,0:4])
@@ -172,7 +175,12 @@ def yolo_loss(output,target):
         iou_value=iou.max()
 
         if (box1.shape[0]!=1): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
-            box1=box1[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
+            try:
+                box1=box1[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
+            except IndexError:
+                print(obj)
+                print(box0)
+                print(box1)
         else:
             box1=box1.squeeze(-2) #torch.Size([6])
 
