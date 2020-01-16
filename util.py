@@ -150,6 +150,8 @@ def yolo_loss(output,target):
     confidence_loss=0
     total_loss=0
 
+    no_obj_conf_loss=0
+
     #target must have size ---> torch.Size([1, obj, ])
     #obj #torch.Size([85])
     for obj in target[0]:
@@ -158,11 +160,12 @@ def yolo_loss(output,target):
         mask=get_mask(target_index,13,416,3) #these are the dimensions of grid and image
 
 
-        box1=box0[mask,:]
+        obj_box=box0[mask,:]
+        noobj_box=box0[np.invert(mask),:]
         
 
         #box2 contains absolute coordinates
-        absolute_box=get_abs_coord(box1[:,0:4])
+        absolute_box=get_abs_coord(obj_box[:,0:4])
 
         target_box=torch.stack([obj[0:4] for a in range(anchors)]) #range anchors!!!!
         target_box=target_box.type(torch.float)
@@ -171,36 +174,41 @@ def yolo_loss(output,target):
         iou=bbox_iou(target_box,absolute_box)
 
         iou_mask=iou.max() == iou
-        box1=box1[iou_mask,:]
+        obj_box=obj_box[iou_mask,:]
         iou_value=iou.max()
 
-        if (box1.shape[0]!=1): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
+        if (obj_box.shape[0]!=1): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
             try:
-                box1=box1[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
+                obj_box=obj_box[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
             except IndexError:
                 print(obj)
                 print(box0)
-                print(box1)
+                print(obj_box)
         else:
-            box1=box1.squeeze(-2) #torch.Size([6])
+            obj_box=obj_box.squeeze(-2) #torch.Size([6])
 
         try:
-            wh_loss=wh_loss+(obj[2]**(1/2)-box1[2]**(1/2))**2 + (obj[3]**(1/2)-box1[3]**(1/2))**2
+            wh_loss=wh_loss+(obj[2]**(1/2)-obj_box[2]**(1/2))**2 + (obj[3]**(1/2)-obj_box[3]**(1/2))**2
         except IndexError:
             print(obj,box0)
 
 
 
             
-        xy_loss=xy_loss+(obj[0]-box1[0])**2 + (obj[1]-box1[1])**2
+        xy_loss=xy_loss+(obj[0]-obj_box[0])**2 + (obj[1]-obj_box[1])**2
 
-        # wh_loss=wh_loss+(obj[2]**(1/2)-box1[2]**(1/2))**2 + (obj[3]**(1/2)-box1[3]**(1/2))**2
+        # wh_loss=wh_loss+(obj[2]**(1/2)-obj_box[2]**(1/2))**2 + (obj[3]**(1/2)-obj_box[3]**(1/2))**2
 
-        class_loss=class_loss+((obj[5:]-box1[5:])**2).sum()
+        class_loss=class_loss+((obj[5:]-obj_box[5:])**2).sum()
 
-        confidence_loss =confidence_loss + (1-box1[4])**2
+        confidence_loss =confidence_loss + 5*(1-obj_box[4])**2
 
-    total_loss=xy_loss+wh_loss+class_loss+confidence_loss
+        for no_obj in noobj_box: #no_obj has size[507,6]
+            no_obj_conf_loss =no_obj_conf_loss + (0-no_obj[4])**2
+
+
+
+    total_loss=5*xy_loss+5*wh_loss+class_loss+confidence_loss+0.5*no_obj_conf_loss
 
     return total_loss
 
