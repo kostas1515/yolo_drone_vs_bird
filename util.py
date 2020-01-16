@@ -93,10 +93,10 @@ def bbox_iou(box1, box2):
 
 def get_abs_coord(box):
     
-    x1 = (box[:,0] - box[:,2]/2) - 1 
-    y1 = (box[:,1] - box[:,3]/2) - 1 
-    x2 = (box[:,0] + box[:,2]/2) - 1 
-    y2 = (box[:,1] + box[:,3]/2) - 1
+    x1 = (box[:,0])
+    y1 = (box[:,1])
+    x2 = (box[:,0] + box[:,2])
+    y2 = (box[:,1] + box[:,3])
 
     return torch.stack((x1, y1, x2, y2)).T
     
