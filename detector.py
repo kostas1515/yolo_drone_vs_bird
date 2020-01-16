@@ -18,6 +18,8 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
+    PATH = './darknet.pth'
+    weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Assuming that we are on a CUDA machine, this should print a CUDA device:
@@ -30,8 +32,7 @@ try:
 
     model.to(device)
     
-    PATH = './darknet.pth'
-    weights = torch.load(PATH)
+    
     model.load_state_dict(weights)
 except FileNotFoundError: 
     net.load_weights("../yolov3.weights")
