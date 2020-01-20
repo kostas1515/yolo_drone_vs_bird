@@ -91,15 +91,23 @@ def bbox_iou(box1, box2):
 
 
 
-def get_abs_coord(box):
-    
+def get_abs_target_coord(box):
+    #the target coord are measured from top-left
     x1 = (box[:,0])
     y1 = (box[:,1])
     x2 = (box[:,0] + box[:,2])
     y2 = (box[:,1] + box[:,3])
 
     return torch.stack((x1, y1, x2, y2)).T
+
+def get_abs_pred_coord(box):
+    # yolo predicts center coordinates
+    x1 = (box[:,0] - box[:,2]/2) - 1 
+    y1 = (box[:,1] - box[:,3]/2) - 1 
+    x2 = (box[:,0] + box[:,2]/2) - 1 
+    y2 = (box[:,1] + box[:,3]/2) - 1
     
+    return torch.stack((x1, y1, x2, y2)).T
 
     
 
@@ -165,12 +173,12 @@ def yolo_loss(output,target):
         
 
         #box2 contains absolute coordinates
-        absolute_box=get_abs_coord(obj_box[:,0:4])
+        absolute_box=get_abs_pred_coord(obj_box[:,0:4])
 
         target_box=torch.stack([obj[0:4] for a in range(anchors)]) #range anchors!!!!
         target_box=target_box.type(torch.float)
 
-        target_box=get_abs_coord(target_box)
+        target_box=get_abs_target_coord(target_box)
         iou=bbox_iou(target_box,absolute_box)
 
         iou_mask=iou.max() == iou
