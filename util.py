@@ -7,6 +7,7 @@ from torch.autograd import Variable
 import numpy as np
 import cv2 
 
+    
 
 def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     batch_size = prediction.size(0)
@@ -54,8 +55,123 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     prediction[:,:,5: 5 + num_classes] = torch.sigmoid((prediction[:,:, 5 : 5 + num_classes]))
     
     prediction[:,:,:4] *= stride
+    strd=torch.ones(1,anchors.shape[1],1)*stride
+    
+    return prediction,anchors,x_y_offset,strd
+
+
+def transform(prediction,anchors,x_y_offset,stride):
+    '''
+    This function takes the raw predicted output from yolo last layer in the correct
+    '[batch_size,3*grid*grid,4+1+class_num] * grid_scale' size and transforms it into the real world coordinates
+    Inputs: raw prediction, xy_offset, anchors, stride
+    Output: real world prediction
+    '''
+    #Sigmoid the  centre_X, centre_Y.
+    prediction[:,:,0] = torch.sigmoid(prediction[:,:,0])
+    prediction[:,:,1] = torch.sigmoid(prediction[:,:,1])
+    
+    #Add the center offsets
+    prediction[:,:,:2] += x_y_offset
+    
+    #log space transform height and the width
+    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4])*anchors
+    prediction[:,:,:4] *= stride
     
     return prediction
+
+def predict(prediction, inp_dim, anchors, num_classes, CUDA = True):
+    '''
+    this function reorders 4 coordinates tx,ty,tw,th as well as confidence and class probabilities
+    then it sigmoids the confidence and the class probabilites
+    Inputs: raw predictions from yolo last layer
+    Outputs: pred: raw coordinate prediction, sigmoided confidence and class probabilities
+    size of pred= [batch_size,3*grid*grid,4+1+class_num] in 3 different scales: grid, 2*gird,4*grid concatenated
+    it also return stride, anchors and xy_offset in the same format to use later to transform raw output
+    in the real world coordinates
+    '''
+    batch_size = prediction.size(0)
+    stride =  inp_dim // prediction.size(2)
+    grid_size = inp_dim // stride
+    bbox_attrs = 5 + num_classes
+    num_anchors = len(anchors)
+    
+    prediction = prediction.view(batch_size, bbox_attrs*num_anchors, grid_size*grid_size)
+    prediction = prediction.transpose(1,2).contiguous()
+    prediction = prediction.view(batch_size, grid_size*grid_size*num_anchors, bbox_attrs)
+    
+    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
+    
+    #Sigmoid object confidencce
+    prediction[:,:,4] = torch.sigmoid(prediction[:,:,4])
+    
+    #Add the center offsets
+    grid = np.arange(grid_size)
+    a,b = np.meshgrid(grid, grid)
+
+    x_offset = torch.FloatTensor(a).view(-1,1)
+    y_offset = torch.FloatTensor(b).view(-1,1)
+
+    if CUDA:
+        x_offset = x_offset.cuda()
+        y_offset = y_offset.cuda()
+
+    x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
+    
+    
+    #log space transform height and the width
+    anchors = torch.FloatTensor(anchors)
+
+    if CUDA:
+        anchors = anchors.cuda()
+
+    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
+    
+    prediction[:,:,5: 5 + num_classes] = torch.sigmoid((prediction[:,:, 5 : 5 + num_classes]))
+    
+    strd=torch.ones(1,anchors.shape[1],1)*stride
+    
+    return prediction
+
+
+
+def get_utillities(stride,inp_dim, anchors, num_classes):
+    '''
+    this function reorders 4 coordinates tx,ty,tw,th as well as confidence and class probabilities
+    then it sigmoids the confidence and the class probabilites
+    Inputs: raw predictions from yolo last layer
+    Outputs: pred: raw coordinate prediction, sigmoided confidence and class probabilities
+    size of pred= [batch_size,3*grid*grid,4+1+class_num] in 3 different scales: grid, 2*gird,4*grid concatenated
+    it also return stride, anchors and xy_offset in the same format to use later to transform raw output
+    in the real world coordinates
+    '''
+    grid_size = inp_dim // stride
+    bbox_attrs = 5 + num_classes
+    num_anchors = len(anchors)
+    
+    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
+    
+    
+    #Add the center offsets
+    grid = np.arange(grid_size)
+    a,b = np.meshgrid(grid, grid)
+
+    x_offset = torch.FloatTensor(a).view(-1,1)
+    y_offset = torch.FloatTensor(b).view(-1,1)
+
+
+    x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
+    
+    
+    #log space transform height and the width
+    anchors = torch.FloatTensor(anchors)
+
+    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
+    
+    strd=torch.ones(1,anchors.shape[1],1)*stride
+    
+    return anchors,x_y_offset,strd
+    
 
 
 
@@ -77,147 +193,160 @@ def bbox_iou(box1, box2):
     
     #Intersection area
     if torch.cuda.is_available():
-            inter_area = torch.max(inter_rect_x2 - inter_rect_x1 + 1,torch.zeros(inter_rect_x2.shape).cuda())*torch.max(inter_rect_y2 - inter_rect_y1 + 1, torch.zeros(inter_rect_x2.shape).cuda())
+            inter_area = torch.max(inter_rect_x2 - inter_rect_x1 ,torch.zeros(inter_rect_x2.shape).cuda())*torch.max(inter_rect_y2 - inter_rect_y1 , torch.zeros(inter_rect_x2.shape).cuda())
     else:
-            inter_area = torch.max(inter_rect_x2 - inter_rect_x1 + 1,torch.zeros(inter_rect_x2.shape))*torch.max(inter_rect_y2 - inter_rect_y1 + 1, torch.zeros(inter_rect_x2.shape))
+            inter_area = torch.max(inter_rect_x2 - inter_rect_x1 ,torch.zeros(inter_rect_x2.shape))*torch.max(inter_rect_y2 - inter_rect_y1 , torch.zeros(inter_rect_x2.shape))
     
     #Union Area
-    b1_area = (b1_x2 - b1_x1 + 1)*(b1_y2 - b1_y1 + 1)
-    b2_area = (b2_x2 - b2_x1 + 1)*(b2_y2 - b2_y1 + 1)
+    b1_area = (b1_x2 - b1_x1 )*(b1_y2 - b1_y1 )
+    b2_area = (b2_x2 - b2_x1 )*(b2_y2 - b2_y1 )
     
     iou = inter_area / (b1_area + b2_area - inter_area)
     
     return iou
 
+def get_utils(stride,inp_dim, anchors, num_classes, CUDA = True):
+    grid_size = inp_dim // stride
+    bbox_attrs = 5 + num_classes
+    num_anchors = len(anchors)
+    
+    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
+    
+    
+    #Add the center offsets
+    grid = np.arange(grid_size)
+    a,b = np.meshgrid(grid, grid)
 
+    x_offset = torch.FloatTensor(a).view(-1,1)
+    y_offset = torch.FloatTensor(b).view(-1,1)
 
-def get_abs_target_coord(box):
-    #the target coord are measured from top-left
-    x1 = (box[:,0])
-    y1 = (box[:,1])
-    x2 = (box[:,0] + box[:,2])
-    y2 = (box[:,1] + box[:,3])
+    if CUDA:
+        x_offset = x_offset.cuda()
+        y_offset = y_offset.cuda()
 
-    return torch.stack((x1, y1, x2, y2)).T
+    x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
+    
+    
+    #log space transform height and the width
+    anchors = torch.FloatTensor(anchors)
 
-def get_abs_pred_coord(box):
+    if CUDA:
+        anchors = anchors.cuda()
+
+    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
+    
+    strd=torch.ones(1,anchors.shape[1],1)*stride
+    
+    return anchors,x_y_offset,strd
+    
+
+# def get_abs_target_coord(box):
+#     #the target coord are measured from top-left
+#     x1 = box[:,0]
+#     y1 = box[:,1]
+#     x2 = box[:,0] + box[:,2]
+#     y2 = box[:,1] + box[:,3]
+
+#     return torch.stack((x1, y1, x2, y2)).T
+
+def get_abs_coord(box):
     # yolo predicts center coordinates
-    x1 = (box[:,0] - box[:,2]/2) - 1 
-    y1 = (box[:,1] - box[:,3]/2) - 1 
-    x2 = (box[:,0] + box[:,2]/2) - 1 
-    y2 = (box[:,1] + box[:,3]/2) - 1
+    box=box.cuda()
+    x1 = (box[:,0] - box[:,2]/2) 
+    y1 = (box[:,1] - box[:,3]/2) 
+    x2 = (box[:,0] + box[:,2]/2) 
+    y2 = (box[:,1] + box[:,3]/2) 
     
     return torch.stack((x1, y1, x2, y2)).T
 
+def xyxy_to_xywh(box):
+    box=box.cuda()
+    xc = (box[:,2]/2+ box[:,0])
+    yc = (box[:,3]/2+ box[:,1])
     
-
-def get_mask(target,grid_cell,img_size,anchors):
-    #lets say grid_cell is 13x13 and im_size is 416
-    grid_size=img_size/grid_cell
-    mask=[]
-    flag_horizontal=False
-    horizontal_counter=grid_size
-    vertical_counter=grid_size
-    lock=True
+    w = (box[:,2])
+    h = (box[:,3])
+    
+    return box
 
 
-    for i in range(grid_cell):
-        if(target[1]<=horizontal_counter):
-            flag_horizontal=True
-        horizontal_counter=grid_size+horizontal_counter
-        vertical_counter=grid_size
-        for j in range(grid_cell):
-            if (target[0]<=vertical_counter)&flag_horizontal&lock:
-                for a in range(anchors):
-                    mask.append(True)
-                lock=False
-            else:
-                for a in range(anchors):
-                    mask.append(False)
-            vertical_counter=grid_size+vertical_counter
-    return mask
+def get_responsible_masks(transformed_output,target):
+    '''
+    this function takes the transformed_output and
+    the target box in respect to the resized image size
+    and returns a mask which can be applied to select the 
+    best raw input,anchors and cx_cy_offset
+    and the noobj_mask for the negatives
+    '''
+    abs_pred_coord=get_abs_coord(transformed_output)
+    abs_target_coord=get_abs_coord(target)
+    
+    iou=bbox_iou(abs_pred_coord,abs_target_coord)
+    iou_mask=iou.max() == iou
+    
+    ignore_mask=0.5>iou
+    inverted_mask=iou.max() != iou
+    noobj_mask=ignore_mask & inverted_mask
+    
+    return iou_mask,noobj_mask
 
+    
+def transform_groundtruth(target,anchors,cx_cy):
+    '''
+    this function takes the target real coordinates and transfroms them into grid cell coordinates
+    returns the groundtruth to use for optimisation step
+    '''
+    target[:,0:2]=target[:,0:2]-cx_cy
+    target[:,2:4]=torch.log(target[:,2:4]/anchors)
+    
+    return target
 
-def yolo_loss(output,target):
+def yolo_loss(output,target,noobj_box):
     '''
     the targets correspon to single image,
     multiple targets can appear in the same image
     target has the size [objects,(tx,ty,tw.th,Confidence=1,class_i)]
     output should have the size [bboxes,(tx,ty,tw.th,Confidence,class_i)]
+    inp_dim is the widht and height of the image specified in yolov3.cfg
     '''
 
     #box size has to be torch.Size([1, grid*grid*anchors, 6])
-    anchors=3#remove that make it generic
-    box0=output[:,:,:].squeeze(-3)# this removes the first dimension, maybe will have to change
+#     box0=output[:,:,:].squeeze(-3)# this removes the first dimension, maybe will have to change
     
-    box0[box0.ne(box0)] = 0 # this substitute all nan with 0
-    
+    #box0[box0.ne(box0)] = 0 # this substitute all nan with 0
+    output=output.squeeze(-2)
     xy_loss=0
     wh_loss=0
     class_loss=0
     confidence_loss=0
     total_loss=0
-
     no_obj_conf_loss=0
 
     #target must have size ---> torch.Size([1, obj, ])
     #obj #torch.Size([85])
-    for obj in target[0]:
-        target_index=obj[0:2]# use target index to create a mask
-        
-        mask=get_mask(target_index,13,416,3) #these are the dimensions of grid and image
-
-
-        obj_box=box0[mask,:]
-        noobj_box=box0[np.invert(mask),:]
-        
-
-        #box2 contains absolute coordinates
-        absolute_box=get_abs_pred_coord(obj_box[:,0:4])
-
-        target_box=torch.stack([obj[0:4] for a in range(anchors)]) #range anchors!!!!
-        target_box=target_box.type(torch.float)
-
-        target_box=get_abs_target_coord(target_box)
-        iou=bbox_iou(target_box,absolute_box)
-
-        iou_mask=iou.max() == iou
-        obj_box=obj_box[iou_mask,:]
-        iou_value=iou.max()
-
-        if (obj_box.shape[0]!=1): #iou is 0 so bbox will be [3,6] and we only want 1 bbox
-            try:
-                obj_box=obj_box[0] #thats because mask can be either [true,true,true] or [fasle,true,true] and break the flow
-            except IndexError:
-                print(obj)
-                print(box0)
-                print(obj_box)
-        else:
-            obj_box=obj_box.squeeze(-2) #torch.Size([6])
+    for obj in target:
+        #abs_target contains xmin ymin xmax ymax coord     
+        #abs_pred_box contains xmin ymin xmax ymax coord        
 
         try:
-            wh_loss=wh_loss+(obj[2]**(1/2)-obj_box[2]**(1/2))**2 + (obj[3]**(1/2)-obj_box[3]**(1/2))**2
+            wh_loss=wh_loss+(obj[2]-output[2])**2 + (obj[3]-output[3])**2
         except IndexError:
-            print(obj,box0)
-
-
-
+            print(obj)
+            print(output)
             
-        xy_loss=xy_loss+(obj[0]-obj_box[0])**2 + (obj[1]-obj_box[1])**2
+        
+        xy_loss=xy_loss+(obj[0]-output[0])**2 + (obj[1]-output[1])**2
 
-        # wh_loss=wh_loss+(obj[2]**(1/2)-obj_box[2]**(1/2))**2 + (obj[3]**(1/2)-obj_box[3]**(1/2))**2
+        class_loss=class_loss+(1-output[5])**2
+        
+        #the confidense penalty could be either 1 or the actual IoU
+        confidence_loss =confidence_loss + (1-output[4])**2
 
-        class_loss=class_loss+((obj[5:]-obj_box[5:])**2).sum()
-
-        confidence_loss =confidence_loss + 5*(1-obj_box[4])**2
-
-        for no_obj in noobj_box: #no_obj has size[507,6]
-            no_obj_conf_loss =no_obj_conf_loss + (0-no_obj[4])**2
-
-
+        for no_obj in noobj_box: 
+            no_obj_conf_loss =no_obj_conf_loss + (0-no_obj)**2
 
     total_loss=5*xy_loss+5*wh_loss+class_loss+confidence_loss+0.5*no_obj_conf_loss
-
+    
     return total_loss
 
 

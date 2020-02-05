@@ -11,7 +11,7 @@ import numpy as np
 
 def get_test_input(imgpath):
     img = cv2.imread(imgpath)
-    img = cv2.resize(img, (416,416))          #Resize to the input dimension
+    img = cv2.resize(img, (544,544))          #Resize to the input dimension
     img_ =  img[:,:,::-1].transpose((2,0,1))  # BGR -> RGB | H X W C -> C X H X W 
     img_ = img_[np.newaxis,:,:,:]/255.0       #Add a channel at 0 (for batch) | Normalise
     img_ = torch.from_numpy(img_).float()     #Convert to float
@@ -171,7 +171,37 @@ class Darknet(nn.Module):
         super(Darknet, self).__init__()
         self.blocks = parse_cfg(cfgfile)
         self.net_info, self.module_list = create_modules(self.blocks)
+        self.inp_dim = int (self.net_info["height"])
         
+        modules = self.blocks[1:]
+        write0 = 0     #This is explained a bit later
+        ja=0
+        for i, module in enumerate(modules):        
+            module_type = (module["type"])            
+            if module_type == 'yolo':        
+                anchors = self.module_list[i][0].anchors
+                #Get the input dimensions
+                inp_dim = int (self.net_info["height"])
+
+                #Get the number of classes
+                num_classes = int (module["classes"])
+                layer_stride=int(32/2**ja)
+                ja=ja+1
+                anchs,xyoffset,strd = get_utillities(layer_stride, inp_dim, anchors, num_classes)
+                
+                if not write0:              #if no collector has been intialised. 
+                    pw_ph=anchs 
+                    cx_cy=xyoffset
+                    stride=strd
+                    write0 = 1
+                #comment else section to get only 13x13
+                else:       
+                    pw_ph=torch.cat((pw_ph,anchs), 1) 
+                    cx_cy=torch.cat((cx_cy,xyoffset), 1) 
+                    stride=torch.cat((stride,strd), 1) 
+        self.pw_ph=pw_ph.to(device='cuda')
+        self.cx_cy=cx_cy.to(device='cuda')
+        self.stride=stride.to(device='cuda')
         
     def forward(self, x, CUDA):
         modules = self.blocks[1:]
@@ -216,16 +246,16 @@ class Darknet(nn.Module):
 
                 #Transform
 
-                x = predict_transform(x, inp_dim, anchors, num_classes, CUDA)
+                x = predict(x, inp_dim, anchors, num_classes, CUDA)
+                
                 if not write:              #if no collector has been intialised. 
                     detections = x
                     write = 1
                 #comment else section to get only 13x13
-                # else:       
-                #     detections = torch.cat((detections, x), 1)
-            
+                else:       
+                    detections = torch.cat((detections, x), 1)
+
             outputs[i] = x
-            
         return detections
     
     
