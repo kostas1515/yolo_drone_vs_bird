@@ -23,7 +23,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './local2.pth'
+    PATH = './darknet.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -65,6 +65,8 @@ epochs=20
 
 lock=0
 total_loss=0
+batch_counter=0
+batch_loss=0
 for e in range(epochs):
     prg_counter=0
     total_loss=0
@@ -106,16 +108,26 @@ for e in range(epochs):
         if(strd.shape[0]==1):
             target[:,0:4]=target[:,0:4]*(inp_dim/strd)
             target=util.transform_groundtruth(target,anchors,offset)
+            if(batch_counter<63):
+                loss=util.yolo_loss(raw_pred,target,noobj_box)
+                batch_loss=batch_loss+loss.item()
+                batch_counter=batch_counter+1
 
-            loss=util.yolo_loss(raw_pred,target,noobj_box)
-            loss.backward()
-            optimizer.step()
-            sys.stdout.write('\r Progress is ' +str(prg_counter/9570*100)+'%' ' loss is: '+ str(loss.item()))
-            sys.stdout.flush()
+            else:
+                batch_counter=batch_counter+1
+                loss=util.yolo_loss(raw_pred,target,noobj_box)
+                batch_loss=(batch_loss+loss)/batch_counter
+                print(batch_counter)
+                batch_counter=0
+                batch_loss.backward()
+                optimizer.step()
+                total_loss=total_loss+batch_loss.item()
+                sys.stdout.write('\r Progress is ' +str(prg_counter/9570*100)+'%' ' loss is: '+ str(batch_loss.item()))
+                batch_loss=0
+                sys.stdout.flush()
             prg_counter=prg_counter+1
-            total_loss=total_loss+loss.item()
         else:
             print('missed')
             prg_counter=prg_counter+1
     torch.save(model.state_dict(), PATH)
-    print('\n total average loss is '+str(total_loss/9570))
+    print('\n total average loss is '+str(total_loss/9570*64))

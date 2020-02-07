@@ -345,7 +345,7 @@ def yolo_loss(output,target,noobj_box):
         for no_obj in noobj_box: 
             no_obj_conf_loss =no_obj_conf_loss + (0-no_obj)**2
 
-    total_loss=5*xy_loss+5*wh_loss+class_loss+confidence_loss+0.5*no_obj_conf_loss
+    total_loss=5*xy_loss+5*wh_loss+class_loss+2*confidence_loss+0.5*no_obj_conf_loss
     
     return total_loss
 
