@@ -60,7 +60,7 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     return prediction,anchors,x_y_offset,strd
 
 
-def transform(prediction,anchors,x_y_offset,stride):
+def transform(prediction,anchors,x_y_offset,stride,CUDA = True):
     '''
     This function takes the raw predicted output from yolo last layer in the correct
     '[batch_size,3*grid*grid,4+1+class_num] * grid_scale' size and transforms it into the real world coordinates
@@ -182,8 +182,8 @@ def bbox_iou(box1, box2):
     
     """
     #Get the coordinates of bounding boxes
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,0], box1[:,1], box1[:,2], box1[:,3]
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,0], box2[:,1], box2[:,2], box2[:,3]
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,:,0], box1[:,:,1], box1[:,:,2], box1[:,:,3]
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,:,0], box2[:,:,1], box2[:,:,2], box2[:,:,3]
     
     #get the coordinates of the intersection rectangle
     inter_rect_x1 =  torch.max(b1_x1, b2_x1)
@@ -252,22 +252,22 @@ def get_utils(stride,inp_dim, anchors, num_classes, CUDA = True):
 def get_abs_coord(box):
     # yolo predicts center coordinates
     box=box.cuda()
-    x1 = (box[:,0] - box[:,2]/2) 
-    y1 = (box[:,1] - box[:,3]/2) 
-    x2 = (box[:,0] + box[:,2]/2) 
-    y2 = (box[:,1] + box[:,3]/2) 
+    x1 = (box[:,:,0] - box[:,:,2]/2) 
+    y1 = (box[:,:,1] - box[:,:,3]/2) 
+    x2 = (box[:,:,0] + box[:,:,2]/2) 
+    y2 = (box[:,:,1] + box[:,:,3]/2) 
     
     return torch.stack((x1, y1, x2, y2)).T
 
 def xyxy_to_xywh(box):
     box=box.cuda()
-    xc = (box[:,2]/2+ box[:,0])
-    yc = (box[:,3]/2+ box[:,1])
+    xc = (box[:,:,2]/2+ box[:,:,0])
+    yc = (box[:,:,3]/2+ box[:,:,1])
     
-    w = (box[:,2])
-    h = (box[:,3])
+    w = (box[:,:,2])
+    h = (box[:,:,3])
     
-    return box
+    return torch.stack((xc, yc, w, h)).T
 
 
 def get_responsible_masks(transformed_output,target):
@@ -280,12 +280,11 @@ def get_responsible_masks(transformed_output,target):
     '''
     abs_pred_coord=get_abs_coord(transformed_output)
     abs_target_coord=get_abs_coord(target)
-    
     iou=bbox_iou(abs_pred_coord,abs_target_coord)
-    iou_mask=iou.max() == iou
+    iou_mask=iou.max(dim=0)[0] == iou
     
     ignore_mask=0.5>iou
-    inverted_mask=iou.max() != iou
+    inverted_mask=iou.max(dim=0)[0] != iou
     noobj_mask=ignore_mask & inverted_mask
     
     return iou_mask,noobj_mask
@@ -301,7 +300,7 @@ def transform_groundtruth(target,anchors,cx_cy):
     
     return target
 
-def yolo_loss(output,target,noobj_box):
+def yolo_loss(output,obj,noobj_box):
     '''
     the targets correspon to single image,
     multiple targets can appear in the same image
@@ -314,38 +313,32 @@ def yolo_loss(output,target,noobj_box):
 #     box0=output[:,:,:].squeeze(-3)# this removes the first dimension, maybe will have to change
     
     #box0[box0.ne(box0)] = 0 # this substitute all nan with 0
-    output=output.squeeze(-2)
     xy_loss=0
     wh_loss=0
     class_loss=0
     confidence_loss=0
     total_loss=0
     no_obj_conf_loss=0
-
+    no_obj_counter=0
     #target must have size ---> torch.Size([1, obj, ])
-    #obj #torch.Size([85])
-    for obj in target:
+    #obj #torch.Size([85]):
         #abs_target contains xmin ymin xmax ymax coord     
         #abs_pred_box contains xmin ymin xmax ymax coord        
 
-        try:
-            wh_loss=wh_loss+(obj[2]-output[2])**2 + (obj[3]-output[3])**2
-        except IndexError:
-            print(obj)
-            print(output)
-            
-        
-        xy_loss=xy_loss+(obj[0]-output[0])**2 + (obj[1]-output[1])**2
+    wh_loss=wh_loss+(obj[:,2]-output[:,2])**2 + (obj[:,3]-output[:,3])**2
+                   
+    xy_loss=xy_loss+(obj[:,0]-output[:,0])**2 + (obj[:,1]-output[:,1])**2
 
-        class_loss=class_loss+(1-output[5])**2
+    class_loss=class_loss+(1-output[:,5])
         
         #the confidense penalty could be either 1 or the actual IoU
-        confidence_loss =confidence_loss + (1-output[4])**2
+    confidence_loss =confidence_loss + (1-output[:,4])
 
-        for no_obj in noobj_box: 
-            no_obj_conf_loss =no_obj_conf_loss + (0-no_obj)**2
-
-    total_loss=5*xy_loss+5*wh_loss+class_loss+2*confidence_loss+0.5*no_obj_conf_loss
+    for no_obj in noobj_box: 
+        no_obj_conf_loss =no_obj_conf_loss + (0-no_obj)**2
+        no_obj_counter=no_obj_counter+1
+    no_obj_conf_loss=no_obj_conf_loss/no_obj_counter
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.5*no_obj_conf_loss
     
     return total_loss
 

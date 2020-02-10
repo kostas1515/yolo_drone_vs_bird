@@ -68,6 +68,7 @@ total_loss=0
 for e in range(epochs):
     prg_counter=0
     total_loss=0
+    start = time.time()
     print("\n epoch "+str(e))
     for index, row in df.iterrows():
         optimizer.zero_grad()
@@ -75,7 +76,7 @@ for e in range(epochs):
         inp = get_test_input(imgpath)
         
         target=torch.tensor([[[row['x']/(1920),row['y']/(1080),row['width']/(1920),row['height']/(1080),1,1]]])
-        target= (target.squeeze(-3))     
+             
         target=util.xyxy_to_xywh(target) # target in normal scale
         
         
@@ -86,25 +87,24 @@ for e in range(epochs):
         
 
         true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
-        true_pred=true_pred.squeeze(-3)
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,target*inp_dim)
         
-        raw_pred=raw_pred.squeeze(-3)
         
-        anchors=pw_ph.clone().squeeze(-3)
-        offset=cx_cy.clone().squeeze(-3)
-        strd=stride.clone().squeeze(-3)
+        anchors=pw_ph.clone()
+        offset=cx_cy.clone()
+        strd=stride.clone()
         
-        noobj_box=raw_pred[:,4].clone()
-        noobj_box=noobj_box[noobj_mask]
+        noobj_box=raw_pred[:,:,4:5].clone()
         
-        raw_pred=raw_pred[iou_mask,:]
-        anchors=anchors[iou_mask,:]
-        offset=offset[iou_mask,:]
-        strd=strd[iou_mask,:]
-        
+        noobj_box=noobj_box[noobj_mask.T,:]
+        raw_pred=raw_pred[iou_mask.T,:]
+        anchors=anchors[iou_mask.T,:]
+        offset=offset[iou_mask.T,:]
+        strd=strd[iou_mask.T,:]
+
         if(strd.shape[0]==1):
             target[:,0:4]=target[:,0:4]*(inp_dim/strd)
+            target=target.squeeze(-2)
             target=util.transform_groundtruth(target,anchors,offset)
 
             loss=util.yolo_loss(raw_pred,target,noobj_box)
@@ -114,6 +114,9 @@ for e in range(epochs):
             sys.stdout.flush()
             prg_counter=prg_counter+1
             total_loss=total_loss+loss.item()
+            print('\n ellapse time is: ')
+            print(time.time() - start)
+            start = time.time()
         else:
             print('missed')
             prg_counter=prg_counter+1
