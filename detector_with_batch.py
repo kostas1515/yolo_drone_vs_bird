@@ -60,7 +60,7 @@ except FileNotFoundError:
 optimizer = optim.Adam(model.parameters(), lr=0.00001)
 
 
-epochs=20
+epochs=40
 
 
 lock=0
@@ -81,7 +81,6 @@ for e in range(epochs):
     prg_counter=0
     total_loss=0
     print("\n epoch "+str(e))
-    start = time.time()
     for index, row in df.iterrows():
         batch_counter=batch_counter+1
         optimizer.zero_grad()
@@ -121,7 +120,6 @@ for e in range(epochs):
 
             noobj_box=raw_pred[:,:,4:5].clone()
             noobj_box=noobj_box[noobj_mask.T,:]
-
             raw_pred=raw_pred[iou_mask.T,:]
             anchors=anchors[iou_mask.T,:]
             offset=offset[iou_mask.T,:]
@@ -129,7 +127,7 @@ for e in range(epochs):
         
 
         
-            if(strd.shape[0]==batch_size):
+            if(strd.shape[0]==batch_size):#this means that iou_mask failed and was all true, because max of zeros is true for all lenght of mask strd
                 targets=targets.squeeze(-2)
                 targets=targets*(inp_dim/strd)
                 targets=util.transform_groundtruth(targets,anchors,offset)
@@ -141,12 +139,16 @@ for e in range(epochs):
                 total_loss=total_loss+loss.item()
                 sys.stdout.write('\r Progress is ' +str(prg_counter/9570*100*batch_size)+'%' ' loss is: '+ str(loss.item()))
                 sys.stdout.flush()
+                del loss, raw_pred
+                torch.cuda.empty_cache()
                 prg_counter=prg_counter+1
-                print('\n ellapse time is: ')
-                print(time.time() - start)
-                start = time.time()
             else:
                 print('missed')
+                print(strd.shape[0])
+                print(targets.shape)
+                print(targets)
+                print(imgpath)
                 prg_counter=prg_counter+1
+                
     torch.save(model.state_dict(), PATH)
     print('\n total average loss is '+str(total_loss/9570*64))

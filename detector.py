@@ -68,7 +68,6 @@ total_loss=0
 for e in range(epochs):
     prg_counter=0
     total_loss=0
-    start = time.time()
     print("\n epoch "+str(e))
     for index, row in df.iterrows():
         optimizer.zero_grad()
@@ -85,7 +84,6 @@ for e in range(epochs):
         target=target.to(device='cuda')
         raw_pred=raw_pred.to(device='cuda')
         
-
         true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,target*inp_dim)
         
@@ -101,12 +99,14 @@ for e in range(epochs):
         anchors=anchors[iou_mask.T,:]
         offset=offset[iou_mask.T,:]
         strd=strd[iou_mask.T,:]
+        
+        print(noobj_box.shape)
+        
 
         if(strd.shape[0]==1):
             target[:,0:4]=target[:,0:4]*(inp_dim/strd)
             target=target.squeeze(-2)
             target=util.transform_groundtruth(target,anchors,offset)
-
             loss=util.yolo_loss(raw_pred,target,noobj_box)
             loss.backward()
             optimizer.step()
@@ -114,9 +114,6 @@ for e in range(epochs):
             sys.stdout.flush()
             prg_counter=prg_counter+1
             total_loss=total_loss+loss.item()
-            print('\n ellapse time is: ')
-            print(time.time() - start)
-            start = time.time()
         else:
             print('missed')
             prg_counter=prg_counter+1

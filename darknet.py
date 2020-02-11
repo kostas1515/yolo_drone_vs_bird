@@ -108,7 +108,7 @@ def create_modules(blocks):
             #Check the activation. 
             #It is either Linear or a Leaky ReLU for YOLO
             if activation == "leaky":
-                activn = nn.LeakyReLU(0.1)
+                activn = nn.LeakyReLU(0.1,inplace = True)
                 module.add_module("leaky_{0}".format(index), activn)
 
         #If it's an upsampling layer

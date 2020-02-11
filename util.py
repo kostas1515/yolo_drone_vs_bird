@@ -100,36 +100,11 @@ def predict(prediction, inp_dim, anchors, num_classes, CUDA = True):
     prediction = prediction.transpose(1,2).contiguous()
     prediction = prediction.view(batch_size, grid_size*grid_size*num_anchors, bbox_attrs)
     
-    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
     
     #Sigmoid object confidencce
     prediction[:,:,4] = torch.sigmoid(prediction[:,:,4])
-    
-    #Add the center offsets
-    grid = np.arange(grid_size)
-    a,b = np.meshgrid(grid, grid)
-
-    x_offset = torch.FloatTensor(a).view(-1,1)
-    y_offset = torch.FloatTensor(b).view(-1,1)
-
-    if CUDA:
-        x_offset = x_offset.cuda()
-        y_offset = y_offset.cuda()
-
-    x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
-    
-    
-    #log space transform height and the width
-    anchors = torch.FloatTensor(anchors)
-
-    if CUDA:
-        anchors = anchors.cuda()
-
-    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
-    
     prediction[:,:,5: 5 + num_classes] = torch.sigmoid((prediction[:,:, 5 : 5 + num_classes]))
     
-    strd=torch.ones(1,anchors.shape[1],1)*stride
     
     return prediction
 
@@ -332,13 +307,11 @@ def yolo_loss(output,obj,noobj_box):
     class_loss=class_loss+(1-output[:,5])
         
         #the confidense penalty could be either 1 or the actual IoU
-    confidence_loss =confidence_loss + (1-output[:,4])
+    confidence_loss =confidence_loss + (1-output[:,4])**2 
 
-    for no_obj in noobj_box: 
-        no_obj_conf_loss =no_obj_conf_loss + (0-no_obj)**2
-        no_obj_counter=no_obj_counter+1
-    no_obj_conf_loss=no_obj_conf_loss/no_obj_counter
-    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.5*no_obj_conf_loss
+    no_obj_conf_loss =no_obj_conf_loss + (0-noobj_box[:,0])**2
+        
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.sum()+0.5*no_obj_conf_loss.sum()
     
     return total_loss
 
