@@ -36,9 +36,14 @@ class DroneDatasetCSV(Dataset):
         img_name = os.path.join(self.root_dir,
                                 self.dataset.iloc[idx, 1]+'_img'+self.dataset.iloc[idx, 3].split(':')[0]+'.jpg')
         image = io.imread(img_name)
+        img_width,img_height= image.shape[1],image.shape[0]
         bbox_coord = self.dataset.iloc[idx, 4:]
         bbox_coord = np.array([bbox_coord])
-        bbox_coord = bbox_coord.astype('float').reshape(-1, 2)
+        bbox_coord = bbox_coord.astype('float').reshape(4)
+        bbox_coord[0]=bbox_coord[0]/img_width
+        bbox_coord[1]=bbox_coord[1]/img_height
+        bbox_coord[2]=bbox_coord[2]/img_width
+        bbox_coord[3]=bbox_coord[3]/img_height
         sample = {'image': image, 'bbox_coord': bbox_coord}
 
         if self.transform:
@@ -61,4 +66,4 @@ class ResizeToTensor(object):
         img_ = torch.from_numpy(img_).float()     #Convert to float
         img_ = Variable(img_,requires_grad=False)                     # Convert to Variable
         return {'image': img_,
-                'bbox_coord': torch.from_numpy(bbox_coord)}
+                'bbox_coord': torch.from_numpy(bbox_coord*self.scale)}

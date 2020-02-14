@@ -226,7 +226,8 @@ def get_utils(stride,inp_dim, anchors, num_classes, CUDA = True):
 
 def get_abs_coord(box):
     # yolo predicts center coordinates
-    box=box.cuda()
+    if torch.cuda.is_available():
+        box=box.cuda()
     x1 = (box[:,:,0] - box[:,:,2]/2) 
     y1 = (box[:,:,1] - box[:,:,3]/2) 
     x2 = (box[:,:,0] + box[:,:,2]/2) 
@@ -235,7 +236,8 @@ def get_abs_coord(box):
     return torch.stack((x1, y1, x2, y2)).T
 
 def xyxy_to_xywh(box):
-    box=box.cuda()
+    if torch.cuda.is_available():
+        box=box.cuda()
     xc = (box[:,:,2]/2+ box[:,:,0])
     yc = (box[:,:,3]/2+ box[:,:,1])
     
