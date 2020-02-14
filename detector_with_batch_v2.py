@@ -10,7 +10,7 @@ import timeit
 
 
 net = Darknet("../cfg/yolov3.cfg")
-inp_dim=net.inp_dim.to(device='cuda')
+inp_dim=net.inp_dim
 pw_ph=net.pw_ph.to(device='cuda')
 cx_cy=net.cx_cy.to(device='cuda')
 stride=net.stride.to(device='cuda')
@@ -55,12 +55,12 @@ except FileNotFoundError:
 transformed_dataset=DroneDatasetCSV(csv_file='../annotations.csv',
                                            root_dir='../images/images/',
                                            transform=transforms.Compose([
-                                               ResizeToTensor(544)
+                                               ResizeToTensor(inp_dim)
                                            ]))
 
 
 
-batch_size=16
+batch_size=8
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=4)
@@ -69,19 +69,21 @@ optimizer = optim.Adam(model.parameters(), lr=0.00001)
 epochs=20
 total_loss=0
 write=0
+misses=0
 for e in range(epochs):
     prg_counter=0
     total_loss=0
     print("\n epoch "+str(e))
     for i_batch, sample_batched in enumerate(dataloader):
         write=0
+        misses=0
         raw_pred = model(sample_batched['image'], torch.cuda.is_available())
         target=util.xyxy_to_xywh(sample_batched['bbox_coord'].unsqueeze(-3))
 
         target=target.to(device='cuda')
         raw_pred=raw_pred.to(device='cuda')
         
-        for b in range(batch_size):
+        for b in range(sample_batched['image'].shape[0]):
             if (write==0):
                 anchors=pw_ph
                 offset=cx_cy
@@ -119,12 +121,12 @@ for e in range(epochs):
             torch.cuda.empty_cache()
             prg_counter=prg_counter+1
         else:
-            print('missed')
-            print(strd.shape[0])
-            print(targets.shape)
-            print(targets)
-            print(imgpath)
+            misses=misses+1
+#             print(strd.shape[0])
+#             print(target.shape)
+#             print(target)
             prg_counter=prg_counter+1
                 
     torch.save(model.state_dict(), PATH)
-    print('\n total average loss is '+str(total_loss/9570*64))
+    print('\ntotal number of misses is ' + str(misses))
+    print('\n total average loss is '+str(total_loss/9570*batch_size))

@@ -39,7 +39,7 @@ class DroneDatasetCSV(Dataset):
         img_width,img_height= image.shape[1],image.shape[0]
         bbox_coord = self.dataset.iloc[idx, 4:]
         bbox_coord = np.array([bbox_coord])
-        bbox_coord = bbox_coord.astype('float').reshape(4)
+        bbox_coord = bbox_coord.astype('float32').reshape(4)
         bbox_coord[0]=bbox_coord[0]/img_width
         bbox_coord[1]=bbox_coord[1]/img_height
         bbox_coord[2]=bbox_coord[2]/img_width
