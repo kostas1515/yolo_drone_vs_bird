@@ -21,11 +21,11 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './local2.pth'
+    PATH = './batch_from_scratch.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    # Assuming that we are on a CUDA machine, this should print a CUDA device:
+    # Assuming that we https://pytorch.org/docs/stable/data.html#torch.utils.data.Datasetare on a CUDA machine, this should print a CUDA device:
     print(device)
     net.to(device)
 
@@ -63,7 +63,8 @@ transformed_dataset=DroneDatasetCSV(csv_file='../annotations.csv',
 batch_size=8
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
-                        shuffle=True, num_workers=4)
+                        shuffle=True, num_workers=0)
+
 
 optimizer = optim.Adam(model.parameters(), lr=0.00001)
 epochs=20
@@ -72,14 +73,19 @@ write=0
 misses=0
 for e in range(epochs):
     prg_counter=0
+    train_counter=0
     total_loss=0
     print("\n epoch "+str(e))
+    misses=0
     for i_batch, sample_batched in enumerate(dataloader):
         write=0
-        misses=0
+        sample_batched['image'],sample_batched['bbox_coord']=sample_batched['image'].to(device='cuda'),sample_batched['bbox_coord'].to(device='cuda')
+        
         raw_pred = model(sample_batched['image'], torch.cuda.is_available())
+        
         target=util.xyxy_to_xywh(sample_batched['bbox_coord'].unsqueeze(-3))
-
+        
+        
         target=target.to(device='cuda')
         raw_pred=raw_pred.to(device='cuda')
         
@@ -90,13 +96,14 @@ for e in range(epochs):
                 strd=stride
                 write=1
             else:
-                anchors=torch.cat((anchors,pw_ph),0)
-                offset=torch.cat((offset,cx_cy),0)
-                strd=torch.cat((strd,stride),0)
+                anchors=torch.cat((anchors,pw_ph),0).to(device='cuda')
+                offset=torch.cat((offset,cx_cy),0).to(device='cuda')
+                strd=torch.cat((strd,stride),0).to(device='cuda')
         
+        del sample_batched['image'],sample_batched['bbox_coord']
         true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,target)
-            
+        
 
         noobj_box=raw_pred[:,:,4:5].clone()
         noobj_box=noobj_box[noobj_mask.T,:]
@@ -110,7 +117,7 @@ for e in range(epochs):
             target=target/strd
             target=util.transform_groundtruth(target,anchors,offset)
 
-            loss=util.yolo_loss(raw_pred,target,noobj_box)
+            loss=util.yolo_loss(raw_pred,target,noobj_box,batch_size)
 
             loss.backward()
             optimizer.step()
@@ -120,13 +127,13 @@ for e in range(epochs):
             del loss, raw_pred
             torch.cuda.empty_cache()
             prg_counter=prg_counter+1
+            train_counter=train_counter+1
         else:
             misses=misses+1
 #             print(strd.shape[0])
 #             print(target.shape)
-#             print(target)
             prg_counter=prg_counter+1
                 
     torch.save(model.state_dict(), PATH)
     print('\ntotal number of misses is ' + str(misses))
-    print('\n total average loss is '+str(total_loss/9570*batch_size))
+    print('\n total average loss is '+str(total_loss/train_counter*batch_size))

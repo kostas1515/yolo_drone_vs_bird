@@ -277,7 +277,7 @@ def transform_groundtruth(target,anchors,cx_cy):
     
     return target
 
-def yolo_loss(output,obj,noobj_box):
+def yolo_loss(output,obj,noobj_box,batch_size):
     '''
     the targets correspon to single image,
     multiple targets can appear in the same image
@@ -313,7 +313,7 @@ def yolo_loss(output,obj,noobj_box):
 
     no_obj_conf_loss =no_obj_conf_loss + (0-noobj_box[:,0])**2
         
-    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.sum()+0.5*no_obj_conf_loss.sum()
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.sum()+0.5*no_obj_conf_loss.sum()/batch_size
     
     return total_loss
 

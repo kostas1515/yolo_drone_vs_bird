@@ -132,7 +132,7 @@ for e in range(epochs):
                 targets=targets*(inp_dim/strd)
                 targets=util.transform_groundtruth(targets,anchors,offset)
 
-                loss=util.yolo_loss(raw_pred,targets,noobj_box)
+                loss=util.yolo_loss(raw_pred,targets,noobj_box,batch_size)
                 
                 loss.backward()
                 optimizer.step()
