@@ -10,11 +10,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
+import tarfile
 
-class DroneDatasetCSV(Dataset):
+class AugDatasetCSV(Dataset):
     """Face Landmarks dataset."""
 
-    def __init__(self, csv_file, root_dir, transform=None,drone_size=None):
+    def __init__(self, csv_file,archieve, root_dir, transform=None):
         """
         Args:
             csv_file (string): Path to the csv file with annotations.
@@ -23,15 +24,11 @@ class DroneDatasetCSV(Dataset):
                 on a sample.
         """
         self.dataset = pd.read_csv(csv_file)
+        self.dataset=self.dataset.sort_values(by=['filename'])
         self.root_dir = root_dir
+        self.tar= tarfile.open(archieve, "r")
+        self.tar.next()
         self.transform = transform
-        
-        if drone_size=='large':
-            self.dataset=self.dataset[self.dataset['width']*self.dataset['height']>=1000]
-        elif drone_size=='medium':
-            self.dataset=self.dataset[(self.dataset['width']*self.dataset['height']>=100)&(self.dataset['width']*self.dataset['height']<1000)]
-        elif drone_size=='small':
-            self.dataset=self.dataset[100>self.dataset['width']*self.dataset['height']]
 
     def __len__(self):
         return len(self.dataset)
@@ -39,19 +36,28 @@ class DroneDatasetCSV(Dataset):
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-
+        
+        tar_img=self.tar.next() #member
+        
         img_name = os.path.join(self.root_dir,
-                                self.dataset.iloc[idx, 1]+'_img'+self.dataset.iloc[idx, 3].split(':')[0]+'.jpg')
-        image = io.imread(img_name)
-        img_width,img_height= image.shape[1],image.shape[0]
-        bbox_coord = self.dataset.iloc[idx, 4:]
-        bbox_coord = np.array([bbox_coord])
-        bbox_coord = bbox_coord.astype('float32').reshape(4)
-        bbox_coord[0]=bbox_coord[0]/img_width
-        bbox_coord[1]=bbox_coord[1]/img_height
-        bbox_coord[2]=bbox_coord[2]/img_width
-        bbox_coord[3]=bbox_coord[3]/img_height
-        sample = {'image': image, 'bbox_coord': bbox_coord}
+                                self.dataset.iloc[idx, 5].split('.')[0]+'.jpg')
+        if('/'+tar_img.name==img_name):
+            
+            extracted_image=self.tar.extractfile(tar_img)
+            
+            image = io.imread(extracted_image)
+            
+            img_width,img_height= image.shape[1],image.shape[0]
+            bbox_coord = self.dataset.iloc[idx,1:5]
+            bbox_coord = np.array([bbox_coord])
+            bbox_coord = bbox_coord.astype('float32').reshape(4)
+            bbox_coord[0]=bbox_coord[0]/img_width
+            bbox_coord[1]=bbox_coord[1]/img_height
+            bbox_coord[2]=bbox_coord[2]/img_width
+            bbox_coord[3]=bbox_coord[3]/img_height
+            sample = {'image': image, 'bbox_coord': bbox_coord}
+        else:
+            print('false')
 
         if self.transform:
             sample = self.transform(sample)

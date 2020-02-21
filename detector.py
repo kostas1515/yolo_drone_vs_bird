@@ -23,7 +23,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './local2.pth'
+    PATH = './online.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -100,14 +100,14 @@ for e in range(epochs):
         offset=offset[iou_mask.T,:]
         strd=strd[iou_mask.T,:]
         
-        print(noobj_box.shape)
+        
         
 
         if(strd.shape[0]==1):
             target[:,0:4]=target[:,0:4]*(inp_dim/strd)
             target=target.squeeze(-2)
             target=util.transform_groundtruth(target,anchors,offset)
-            loss=util.yolo_loss(raw_pred,target,noobj_box)
+            loss=util.yolo_loss(raw_pred,target,noobj_box,1)
             loss.backward()
             optimizer.step()
             sys.stdout.write('\r Progress is ' +str(prg_counter/9570*100)+'%' ' loss is: '+ str(loss.item()))

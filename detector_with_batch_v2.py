@@ -7,6 +7,7 @@ import pandas as pd
 import time
 import sys
 import timeit
+import torch.autograd
 
 
 net = Darknet("../cfg/yolov3.cfg")
@@ -21,7 +22,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './batch_from_scratch.pth'
+    PATH = './test3.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -54,33 +55,37 @@ except FileNotFoundError:
 
 transformed_dataset=DroneDatasetCSV(csv_file='../annotations.csv',
                                            root_dir='../images/images/',
+                                           drone_size='all',
                                            transform=transforms.Compose([
                                                ResizeToTensor(inp_dim)
                                            ]))
 
 
-
+dataset_len=(len(transformed_dataset))
 batch_size=8
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=0)
 
 
-optimizer = optim.Adam(model.parameters(), lr=0.00001)
-epochs=20
+optimizer = optim.Adam(model.parameters(), lr=0.00001,weight_decay=0.001)
+epochs=100
 total_loss=0
 write=0
 misses=0
+break_flag=0
+avg_iou=0
 for e in range(epochs):
     prg_counter=0
     train_counter=0
     total_loss=0
+    avg_iou=0
+    avg_infs=0
     print("\n epoch "+str(e))
     misses=0
     for i_batch, sample_batched in enumerate(dataloader):
         write=0
         sample_batched['image'],sample_batched['bbox_coord']=sample_batched['image'].to(device='cuda'),sample_batched['bbox_coord'].to(device='cuda')
-        
         raw_pred = model(sample_batched['image'], torch.cuda.is_available())
         
         target=util.xyxy_to_xywh(sample_batched['bbox_coord'].unsqueeze(-3))
@@ -100,9 +105,15 @@ for e in range(epochs):
                 offset=torch.cat((offset,cx_cy),0).to(device='cuda')
                 strd=torch.cat((strd,stride),0).to(device='cuda')
         
-        del sample_batched['image'],sample_batched['bbox_coord']
         true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
+        
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,target)
+        
+        abs_pred=util.get_abs_coord(true_pred)
+        abs_true=util.get_abs_coord(target)
+        iou=util.bbox_iou(abs_pred,abs_true)
+        infs=iou.ne(iou).sum().item()
+        iou[iou.ne(iou)] = 0 #removes nan values
         
 
         noobj_box=raw_pred[:,:,4:5].clone()
@@ -112,28 +123,31 @@ for e in range(epochs):
         offset=offset[iou_mask.T,:]
         strd=strd[iou_mask.T,:]
         
-        if(strd.shape[0]==batch_size):#this means that iou_mask failed and was all true, because max of zeros is true for all lenght of mask strd
+        if(strd.shape[0]==sample_batched['image'].shape[0]):#this means that iou_mask failed and was all true, because max of zeros is true for all lenght of mask strd
             target=target.squeeze(-2)
             target=target/strd
             target=util.transform_groundtruth(target,anchors,offset)
 
             loss=util.yolo_loss(raw_pred,target,noobj_box,batch_size)
-
             loss.backward()
             optimizer.step()
             total_loss=total_loss+loss.item()
-            sys.stdout.write('\r Progress is ' +str(prg_counter/9570*100*batch_size)+'%' ' loss is: '+ str(loss.item()))
+            sys.stdout.write('\r Progress is ' +str(prg_counter/dataset_len*100*batch_size)+'%' ' loss is: '+ str(loss.item()))
+            sys.stdout.write(' IoU is: ' + str(iou.max(dim=0)[0].mean().item())+' infs are: '+str(infs))
             sys.stdout.flush()
-            del loss, raw_pred
+            del loss, raw_pred, target, true_pred, sample_batched['image']
+            avg_iou=avg_iou+iou.max(dim=0)[0].mean().data#use .data in =+ statements 
+            avg_infs=avg_infs+infs
             torch.cuda.empty_cache()
             prg_counter=prg_counter+1
             train_counter=train_counter+1
         else:
             misses=misses+1
-#             print(strd.shape[0])
-#             print(target.shape)
+            print('missed')
+            print(strd.shape[0])
             prg_counter=prg_counter+1
-                
     torch.save(model.state_dict(), PATH)
     print('\ntotal number of misses is ' + str(misses))
-    print('\n total average loss is '+str(total_loss/train_counter*batch_size))
+    print('\n total average loss is '+str(total_loss/train_counter))
+    print('\n total average iou is '+str(avg_iou/train_counter))
+    print('\n total average infs is '+str(avg_infs/train_counter))

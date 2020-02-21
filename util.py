@@ -75,7 +75,7 @@ def transform(prediction,anchors,x_y_offset,stride,CUDA = True):
     prediction[:,:,:2] += x_y_offset
     
     #log space transform height and the width
-    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4])*anchors
+    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4]).clamp(max=1E4)*anchors
     prediction[:,:,:4] *= stride
     
     return prediction
@@ -258,6 +258,7 @@ def get_responsible_masks(transformed_output,target):
     abs_pred_coord=get_abs_coord(transformed_output)
     abs_target_coord=get_abs_coord(target)
     iou=bbox_iou(abs_pred_coord,abs_target_coord)
+    iou[iou.ne(iou)] = 0
     iou_mask=iou.max(dim=0)[0] == iou
     
     ignore_mask=0.5>iou
@@ -313,7 +314,7 @@ def yolo_loss(output,obj,noobj_box,batch_size):
 
     no_obj_conf_loss =no_obj_conf_loss + (0-noobj_box[:,0])**2
         
-    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.sum()+0.5*no_obj_conf_loss.sum()/batch_size
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.05*no_obj_conf_loss.sum()/batch_size
     
     return total_loss
 
