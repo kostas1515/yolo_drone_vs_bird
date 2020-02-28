@@ -60,7 +60,7 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     return prediction,anchors,x_y_offset,strd
 
 
-def transform(prediction,anchors,x_y_offset,stride,CUDA = True):
+def transform(prediction,anchors,x_y_offset,stride,inp_dim,CUDA = True):
     '''
     This function takes the raw predicted output from yolo last layer in the correct
     '[batch_size,3*grid*grid,4+1+class_num] * grid_scale' size and transforms it into the real world coordinates
@@ -74,9 +74,9 @@ def transform(prediction,anchors,x_y_offset,stride,CUDA = True):
     #Add the center offsets
     prediction[:,:,:2] += x_y_offset
     
+    prediction[:,:,:2] = prediction[:,:,:2]/(inp_dim // stride)
     #log space transform height and the width
-    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4]).clamp(max=1E4)*anchors
-    prediction[:,:,:4] *= stride
+    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4]).clamp(max=1E4)*anchors/(inp_dim // stride)
     
     return prediction
 
@@ -138,7 +138,6 @@ def get_utillities(stride,inp_dim, anchors, num_classes):
     x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
     
     
-    #log space transform height and the width
     anchors = torch.FloatTensor(anchors)
 
     anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
@@ -150,7 +149,7 @@ def get_utillities(stride,inp_dim, anchors, num_classes):
 
 
 
-def bbox_iou(box1, box2):
+def bbox_iou(box1, box2,CUDA=True):
     """
     Returns the IoU of two bounding boxes 
     
@@ -167,7 +166,7 @@ def bbox_iou(box1, box2):
     inter_rect_y2 =  torch.min(b1_y2, b2_y2)
     
     #Intersection area
-    if torch.cuda.is_available():
+    if CUDA:
             inter_area = torch.max(inter_rect_x2 - inter_rect_x1 ,torch.zeros(inter_rect_x2.shape).cuda())*torch.max(inter_rect_y2 - inter_rect_y1 , torch.zeros(inter_rect_x2.shape).cuda())
     else:
             inter_area = torch.max(inter_rect_x2 - inter_rect_x1 ,torch.zeros(inter_rect_x2.shape))*torch.max(inter_rect_y2 - inter_rect_y1 , torch.zeros(inter_rect_x2.shape))
@@ -180,50 +179,7 @@ def bbox_iou(box1, box2):
     
     return iou
 
-def get_utils(stride,inp_dim, anchors, num_classes, CUDA = True):
-    grid_size = inp_dim // stride
-    bbox_attrs = 5 + num_classes
-    num_anchors = len(anchors)
     
-    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
-    
-    
-    #Add the center offsets
-    grid = np.arange(grid_size)
-    a,b = np.meshgrid(grid, grid)
-
-    x_offset = torch.FloatTensor(a).view(-1,1)
-    y_offset = torch.FloatTensor(b).view(-1,1)
-
-    if CUDA:
-        x_offset = x_offset.cuda()
-        y_offset = y_offset.cuda()
-
-    x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)
-    
-    
-    #log space transform height and the width
-    anchors = torch.FloatTensor(anchors)
-
-    if CUDA:
-        anchors = anchors.cuda()
-
-    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
-    
-    strd=torch.ones(1,anchors.shape[1],1)*stride
-    
-    return anchors,x_y_offset,strd
-    
-
-# def get_abs_target_coord(box):
-#     #the target coord are measured from top-left
-#     x1 = box[:,0]
-#     y1 = box[:,1]
-#     x2 = box[:,0] + box[:,2]
-#     y2 = box[:,1] + box[:,3]
-
-#     return torch.stack((x1, y1, x2, y2)).T
-
 def get_abs_coord(box):
     # yolo predicts center coordinates
     if torch.cuda.is_available():
@@ -257,7 +213,7 @@ def get_responsible_masks(transformed_output,target):
     '''
     abs_pred_coord=get_abs_coord(transformed_output)
     abs_target_coord=get_abs_coord(target)
-    iou=bbox_iou(abs_pred_coord,abs_target_coord)
+    iou=bbox_iou(abs_pred_coord,abs_target_coord,True)
     iou[iou.ne(iou)] = 0
     iou_mask=iou.max(dim=0)[0] == iou
     
@@ -314,7 +270,7 @@ def yolo_loss(output,obj,noobj_box,batch_size):
 
     no_obj_conf_loss =no_obj_conf_loss + (0-noobj_box[:,0])**2
         
-    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.05*no_obj_conf_loss.sum()/batch_size
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.5*no_obj_conf_loss.sum()/batch_size
     
     return total_loss
 

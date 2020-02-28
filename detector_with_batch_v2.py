@@ -22,7 +22,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './test3.pth'
+    PATH = './l+m2_normal.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -31,13 +31,15 @@ try:
     net.to(device)
 
     if torch.cuda.device_count() > 1:
-      print("Using ", torch.cuda.device_count(), "GPUs!")
-      model = nn.DataParallel(net)
-
-    model.to(device)
-    
-    
-    model.load_state_dict(weights)
+        print("Using ", torch.cuda.device_count(), "GPUs!")
+        model = nn.DataParallel(net)
+        model.to(device)
+        model.load_state_dict(weights)
+    else:
+        model=net
+        model.to(device)
+        model.load_state_dict(weights)
+        
 except FileNotFoundError: 
     net.load_weights("../yolov3.weights")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -47,29 +49,33 @@ except FileNotFoundError:
     print(device)
     net.to(device)
     if torch.cuda.device_count() > 1:
-      print("Using ", torch.cuda.device_count(), "GPUs!")
-      model = nn.DataParallel(net)
+        print("Using ", torch.cuda.device_count(), "GPUs!")
+        model = nn.DataParallel(net)
+        model.to(device)
+    else:
+        model=net
 
-    model.to(device)
     
-
+drone_size='large+medium'
+print('training for '+ drone_size+'\n')
 transformed_dataset=DroneDatasetCSV(csv_file='../annotations.csv',
                                            root_dir='../images/images/',
-                                           drone_size='all',
+                                           drone_size=drone_size,
                                            transform=transforms.Compose([
                                                ResizeToTensor(inp_dim)
                                            ]))
 
 
 dataset_len=(len(transformed_dataset))
+print('Length of dataset is '+ str(dataset_len)+'\n')
 batch_size=8
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=0)
 
 
-optimizer = optim.Adam(model.parameters(), lr=0.00001,weight_decay=0.001)
-epochs=100
+optimizer = optim.Adam(model.parameters(), lr=0.000001)
+epochs=150
 total_loss=0
 write=0
 misses=0
@@ -105,13 +111,14 @@ for e in range(epochs):
                 offset=torch.cat((offset,cx_cy),0).to(device='cuda')
                 strd=torch.cat((strd,stride),0).to(device='cuda')
         
-        true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
-        
+        true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride,inp_dim)
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,target)
         
         abs_pred=util.get_abs_coord(true_pred)
         abs_true=util.get_abs_coord(target)
-        iou=util.bbox_iou(abs_pred,abs_true)
+        iou=util.bbox_iou(abs_pred,abs_true,True)
+        
+        iou_mask=iou.max(dim=0)[0] == iou
         infs=iou.ne(iou).sum().item()
         iou[iou.ne(iou)] = 0 #removes nan values
         
@@ -125,9 +132,9 @@ for e in range(epochs):
         
         if(strd.shape[0]==sample_batched['image'].shape[0]):#this means that iou_mask failed and was all true, because max of zeros is true for all lenght of mask strd
             target=target.squeeze(-2)
-            target=target/strd
-            target=util.transform_groundtruth(target,anchors,offset)
 
+            target=target*inp_dim/strd
+            target=util.transform_groundtruth(target,anchors,offset)
             loss=util.yolo_loss(raw_pred,target,noobj_box,batch_size)
             loss.backward()
             optimizer.step()

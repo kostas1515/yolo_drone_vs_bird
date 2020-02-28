@@ -32,6 +32,8 @@ class DroneDatasetCSV(Dataset):
             self.dataset=self.dataset[(self.dataset['width']*self.dataset['height']>=100)&(self.dataset['width']*self.dataset['height']<1000)]
         elif drone_size=='small':
             self.dataset=self.dataset[100>self.dataset['width']*self.dataset['height']]
+        elif drone_size=='large+medium':
+             self.dataset=self.dataset[100<=self.dataset['width']*self.dataset['height']]
 
     def __len__(self):
         return len(self.dataset)
@@ -73,4 +75,4 @@ class ResizeToTensor(object):
         img_ = torch.from_numpy(img_).float()     #Convert to float
         img_ = Variable(img_,requires_grad=False)                     # Convert to Variable
         return {'image': img_,
-                'bbox_coord': torch.from_numpy(bbox_coord*self.scale)}
+                'bbox_coord': torch.from_numpy(bbox_coord)}

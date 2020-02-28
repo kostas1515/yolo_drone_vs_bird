@@ -6,8 +6,8 @@ import pandas as pd
 import time
 import sys
 import timeit
-
-
+from dataset import *
+import torchvision.ops.boxes as nms_box
 
 df = pd.read_csv('../test_annotations.csv')
 
@@ -23,7 +23,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './local2.pth'
+    PATH = './l+m2_normal.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -32,8 +32,8 @@ try:
     net.to(device)
 
     if torch.cuda.device_count() > 1:
-      print("Using ", torch.cuda.device_count(), "GPUs!")
-      model = nn.DataParallel(net)
+        print("Using ", torch.cuda.device_count(), "GPUs!")
+        model = nn.DataParallel(net)
 
     model.to(device)
     
@@ -63,48 +63,73 @@ df['pred_ymin']=0.0
 df['pred_xmax']=0.0
 df['pred_ymax']=0.0
 df['iou']=0.0
-epochs=1
+drone_size='large'
+print('training for '+ drone_size+'\n')
+transformed_dataset=DroneDatasetCSV(csv_file='../test_annotations.csv',
+                                           root_dir='../test_images/',
+                                           drone_size=drone_size,
+                                           transform=transforms.Compose([
+                                               ResizeToTensor(inp_dim)
+                                           ]))
+
+
+dataset_len=(len(transformed_dataset))
+print('Length of dataset is '+ str(dataset_len)+'\n')
+batch_size=1
+
+dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
+                        shuffle=True, num_workers=0)
+
 true_pos=0
+false_pos=0
 counter=0
-for e in range(epochs):
-    for index, row in df.iterrows():
-        torch.cuda.empty_cache()
-        #imgpath='../images/images/'+row['filename']+'_img'+row['framespan'].split(':')[0]+'.jpg'
-        imgpath='../test_images/'+row['filename']+'_'+str(row['obj_id'])+'_img'+row['framespan'].split(':')[0]+'.jpg'
-        try:
-            inp = get_test_input(imgpath)
-        except:
-            print(imgpath)
-        raw_pred = model(inp, torch.cuda.is_available())
-        target=torch.tensor([[[row['x'],row['y'],row['width'],row['height'],1,1]]], dtype=torch.float)     
-        target=util.xyxy_to_xywh(target)
-        target=util.get_abs_coord(target)
+iou_threshold=0.75
+confidence=0.75
 
-        raw_pred=raw_pred.to(device='cuda')
+for i_batch, sample_batched in enumerate(dataloader):
+    inp=sample_batched['image'].cuda()
+    raw_pred = model(inp, torch.cuda.is_available())
+    target=sample_batched['bbox_coord'].unsqueeze(0)
+    
+    target=util.xyxy_to_xywh(target)
+    target=util.get_abs_coord(target)
+
+    raw_pred=raw_pred.to(device='cuda')
 
 
-        true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
-        pred_mask=true_pred[0,:,4].max() == true_pred[0,:,4]
-        pred_final=true_pred[:,pred_mask]
+    true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride,inp_dim)
+    
+    sorted_pred=torch.sort(true_pred[0,:,4],descending=True)
+    pred_mask=sorted_pred[0]>confidence
+    
+    indices=(sorted_pred[1][pred_mask])
+    pred_final=true_pred[0,indices,:]
+#     pred_mask=true_pred[0,:,4].max() == true_pred[0,:,4]
+    
+    pred_final_coord=util.get_abs_coord(pred_final.unsqueeze(-2))
+#       df.pred_xmin[counter]=round(pred_final[:,:,0].item())
+#       df.pred_ymin[counter]=round(pred_final[:,:,1].item())
+#       df.pred_xmax[counter]=round(pred_final[:,:,2].item())
+#       df.pred_ymax[counter]=round(pred_final[:,:,3].item())
+    
+    indices=nms_box.nms(pred_final_coord[0],pred_final[:,4],iou_threshold)
+    pred_final_coord=pred_final_coord.to('cuda')
+    target=target.to('cuda')
+    
+    iou=util.bbox_iou(target,pred_final_coord[:,indices],CUDA=True)
+    
+    true_pos=true_pos+(iou>=0.5).sum().item()
+    false_pos=false_pos+(iou<0.5).sum().item()
+    #         df.iou[counter]=iou.item()
+    counter=counter+1
+print('precision')
+precision=true_pos/(true_pos+false_pos)
+print(precision)
 
-        pred_final=util.get_abs_coord(pred_final)
-        pred_final[:,:,0]=pred_final[:,:,0]*1920/544
-        pred_final[:,:,1]=pred_final[:,:,1]*1080/544
-        pred_final[:,:,2]=pred_final[:,:,2]*1920/544
-        pred_final[:,:,3]=pred_final[:,:,3]*1080/544
-        
-        df.pred_xmin[counter]=round(pred_final[:,:,0].item())
-        df.pred_ymin[counter]=round(pred_final[:,:,1].item())
-        df.pred_xmax[counter]=round(pred_final[:,:,2].item())
-        df.pred_ymax[counter]=round(pred_final[:,:,3].item())
-        
-        iou=util.bbox_iou(target,pred_final)  
-        if(iou>0.5):
-            true_pos=true_pos+1
-        df.iou[counter]=iou.item()
-        counter=counter+1
-        
-print(counter)
-print(true_pos/counter)
+print('recall')
+recall=true_pos/(counter)
+print(recall)
+f1=2*(precision*recall)/(precision+recall)
+print(f1)
 
-df.to_csv('test+pred_annotations.csv')
+# df.to_csv('test+pred_annotations.csv')
