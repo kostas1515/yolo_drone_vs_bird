@@ -34,6 +34,8 @@ class DroneDatasetCSV(Dataset):
             self.dataset=self.dataset[100>self.dataset['width']*self.dataset['height']]
         elif drone_size=='large+medium':
              self.dataset=self.dataset[100<=self.dataset['width']*self.dataset['height']]
+        
+        
 
     def __len__(self):
         return len(self.dataset)
@@ -46,15 +48,16 @@ class DroneDatasetCSV(Dataset):
                                 self.dataset.iloc[idx, 1]+'_img'+self.dataset.iloc[idx, 3].split(':')[0]+'.jpg')
         image = io.imread(img_name)
         img_width,img_height= image.shape[1],image.shape[0]
-        bbox_coord = self.dataset.iloc[idx, 4:]
-        bbox_coord = np.array([bbox_coord])
-        bbox_coord = bbox_coord.astype('float32').reshape(4)
-        bbox_coord[0]=bbox_coord[0]/img_width
-        bbox_coord[1]=bbox_coord[1]/img_height
-        bbox_coord[2]=bbox_coord[2]/img_width
-        bbox_coord[3]=bbox_coord[3]/img_height
+        bbox_coord = list(map(lambda x: x.split(';'),self.dataset.iloc[idx, 4:]))
+        bbox_coord = np.array(bbox_coord)
+        bbox_coord = bbox_coord.astype('float32').T
+        bbox_coord[:,2]=(bbox_coord[:,0]+bbox_coord[:,2])/img_width
+        bbox_coord[:,3]=(bbox_coord[:,3]+bbox_coord[:,1])/img_height
+        bbox_coord[:,0]=(bbox_coord[:,0])/img_width
+        bbox_coord[:,1]=(bbox_coord[:,1])/img_height
+        
         sample = {'image': image, 'bbox_coord': bbox_coord}
-
+        
         if self.transform:
             sample = self.transform(sample)
             
@@ -73,6 +76,8 @@ class ResizeToTensor(object):
         img_ =  img[:,:,::-1].transpose((2,0,1))  # BGR -> RGB | H X W C -> C X H X W 
         img_ = img_/255.0       #Add a channel at 0 (for batch) | Normalise
         img_ = torch.from_numpy(img_).float()     #Convert to float
-        img_ = Variable(img_,requires_grad=False)                     # Convert to Variable
+        img_ = Variable(img_,requires_grad=False)# Convert to Variable
         return {'image': img_,
-                'bbox_coord': torch.from_numpy(bbox_coord)}
+                'bbox_coord': torch.from_numpy(bbox_coord*self.scale)}
+
+    

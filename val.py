@@ -6,7 +6,7 @@ import pandas as pd
 import time
 import sys
 import timeit
-from dataset import *
+from test_dataset import *
 import torchvision.ops.boxes as nms_box
 
 df = pd.read_csv('../test_annotations.csv')
@@ -23,7 +23,7 @@ when loading weights from dataparallel model then, you first need to instatiate 
 if you start fresh then first model.load_weights and then make it parallel
 '''
 try:
-    PATH = './l+m2_normal.pth'
+    PATH = './test.pth'
     weights = torch.load(PATH)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -63,8 +63,8 @@ df['pred_ymin']=0.0
 df['pred_xmax']=0.0
 df['pred_ymax']=0.0
 df['iou']=0.0
-drone_size='large'
-print('training for '+ drone_size+'\n')
+drone_size='all'
+print('testing for '+ drone_size+'\n')
 transformed_dataset=DroneDatasetCSV(csv_file='../test_annotations.csv',
                                            root_dir='../test_images/',
                                            drone_size=drone_size,
@@ -78,27 +78,23 @@ print('Length of dataset is '+ str(dataset_len)+'\n')
 batch_size=1
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
-                        shuffle=True, num_workers=0)
+                        shuffle=False, num_workers=0)
 
 true_pos=0
 false_pos=0
 counter=0
-iou_threshold=0.75
-confidence=0.75
+iou_threshold=0
+confidence=0.7
+recall_counter=0
 
 for i_batch, sample_batched in enumerate(dataloader):
     inp=sample_batched['image'].cuda()
     raw_pred = model(inp, torch.cuda.is_available())
     target=sample_batched['bbox_coord'].unsqueeze(0)
-    
-    target=util.xyxy_to_xywh(target)
-    target=util.get_abs_coord(target)
-
     raw_pred=raw_pred.to(device='cuda')
-
-
-    true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride,inp_dim)
     
+
+    true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
     sorted_pred=torch.sort(true_pred[0,:,4],descending=True)
     pred_mask=sorted_pred[0]>confidence
     
@@ -117,9 +113,10 @@ for i_batch, sample_batched in enumerate(dataloader):
     target=target.to('cuda')
     
     iou=util.bbox_iou(target,pred_final_coord[:,indices],CUDA=True)
-    
     true_pos=true_pos+(iou>=0.5).sum().item()
     false_pos=false_pos+(iou<0.5).sum().item()
+    if((iou>=0.5).sum().item()>0):
+        recall_counter=recall_counter+1
     #         df.iou[counter]=iou.item()
     counter=counter+1
 print('precision')
@@ -127,7 +124,7 @@ precision=true_pos/(true_pos+false_pos)
 print(precision)
 
 print('recall')
-recall=true_pos/(counter)
+recall=recall_counter/(counter)
 print(recall)
 f1=2*(precision*recall)/(precision+recall)
 print(f1)

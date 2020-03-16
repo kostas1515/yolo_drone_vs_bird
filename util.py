@@ -60,7 +60,7 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     return prediction,anchors,x_y_offset,strd
 
 
-def transform(prediction,anchors,x_y_offset,stride,inp_dim,CUDA = True):
+def transform(prediction,anchors,x_y_offset,stride,CUDA = True):
     '''
     This function takes the raw predicted output from yolo last layer in the correct
     '[batch_size,3*grid*grid,4+1+class_num] * grid_scale' size and transforms it into the real world coordinates
@@ -74,9 +74,9 @@ def transform(prediction,anchors,x_y_offset,stride,inp_dim,CUDA = True):
     #Add the center offsets
     prediction[:,:,:2] += x_y_offset
     
-    prediction[:,:,:2] = prediction[:,:,:2]/(inp_dim // stride)
+    prediction[:,:,:2] = prediction[:,:,:2]*(stride)
     #log space transform height and the width
-    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4]).clamp(max=1E4)*anchors/(inp_dim // stride)
+    prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4]).clamp(max=1E4)*anchors*stride
     
     return prediction
 
@@ -194,42 +194,77 @@ def get_abs_coord(box):
 def xyxy_to_xywh(box):
     if torch.cuda.is_available():
         box=box.cuda()
-    xc = (box[:,:,2]/2+ box[:,:,0])
-    yc = (box[:,:,3]/2+ box[:,:,1])
+    xc = (box[:,:,2]- box[:,:,0])/2 +box[:,:,0]
+    yc = (box[:,:,3]- box[:,:,1])/2 +box[:,:,1]
     
-    w = (box[:,:,2])
-    h = (box[:,:,3])
+    w = (box[:,:,2]- box[:,:,0])
+    h = (box[:,:,3]- box[:,:,1])
     
     return torch.stack((xc, yc, w, h)).T
 
+def same_picture_mask(responsible_mask,mask):
+    '''
+    mask is a list containing the number of objects per image
+    '''
+    k=0
+    for i,count in enumerate(mask):
+        same_image_mask=False
+        for obj in range(count):
+            same_image_mask=same_image_mask+responsible_mask[:,k+obj]
+        for obj in range(count):
+            responsible_mask[:,k+obj]=same_image_mask
+        k=k+count
+    return responsible_mask
 
-def get_responsible_masks(transformed_output,target):
+
+def get_responsible_masks(transformed_output,targets,offset,strd,mask):
     '''
     this function takes the transformed_output and
     the target box in respect to the resized image size
     and returns a mask which can be applied to select the 
     best raw input,anchors and cx_cy_offset
     and the noobj_mask for the negatives
+    targets is a list
     '''
-    abs_pred_coord=get_abs_coord(transformed_output)
-    abs_target_coord=get_abs_coord(target)
-    iou=bbox_iou(abs_pred_coord,abs_target_coord,True)
-    iou[iou.ne(iou)] = 0
-    iou_mask=iou.max(dim=0)[0] == iou
+    #first compute the centered target coords
+    centered_target=xyxy_to_xywh(targets)[:,:,0:2]
+    #then devide by stride to get the relative grid size coordinates, floor the result to get the corresponding cell
+    centered_target=torch.floor(centered_target/strd)
     
+    #create a mask to find where the gt falls into which gridcell in the grid coordinate system
+    fall_into_mask=centered_target==offset
+    fall_into_mask=fall_into_mask[:,:,0]&fall_into_mask[:,:,1]
+#     fall_into_mask= ~fall_into_mask
+    #create a copy of the transformed output
+    best_bboxes=transformed_output.clone()
+    #apply reverse mask to copy in order to zero all other bbox locations
+    best_bboxes[~fall_into_mask]=0   
+    #transform the copy to xmin,xmax,ymin,ymax
+    best_responsible_coord=get_abs_coord(best_bboxes)
+    #calculate best iou and mask
+    responsible_iou=bbox_iou(best_responsible_coord,targets,True)
+
+    responsible_iou[responsible_iou.ne(responsible_iou)] = 0
+    responsible_mask=responsible_iou.max(dim=0)[0] == responsible_iou
+    abs_coord=get_abs_coord(transformed_output)
+    iou=bbox_iou(abs_coord,targets,True)
+    iou[iou.ne(iou)] = 0
     ignore_mask=0.5>iou
     inverted_mask=iou.max(dim=0)[0] != iou
-    noobj_mask=ignore_mask & inverted_mask
+    noobj_mask=ignore_mask & inverted_mask & ~same_picture_mask(responsible_mask.clone(),mask)
     
-    return iou_mask,noobj_mask
+    return responsible_mask,noobj_mask
 
     
-def transform_groundtruth(target,anchors,cx_cy):
+def transform_groundtruth(target,anchors,cx_cy,strd):
     '''
     this function takes the target real coordinates and transfroms them into grid cell coordinates
     returns the groundtruth to use for optimisation step
+    consider using sigmoid to prediction, insted of inversing groundtruth
     '''
+    target=target/strd
     target[:,0:2]=target[:,0:2]-cx_cy
+    target[:,0:2]=torch.log(target[:,0:2]/(1-target[:,0:2])).clamp(min=-10, max=10)
     target[:,2:4]=torch.log(target[:,2:4]/anchors)
     
     return target
@@ -254,23 +289,25 @@ def yolo_loss(output,obj,noobj_box,batch_size):
     total_loss=0
     no_obj_conf_loss=0
     no_obj_counter=0
-    #target must have size ---> torch.Size([1, obj, ])
-    #obj #torch.Size([85]):
-        #abs_target contains xmin ymin xmax ymax coord     
-        #abs_pred_box contains xmin ymin xmax ymax coord        
+    gamma=1
+    alpha=0.95
 
     wh_loss=wh_loss+(obj[:,2]-output[:,2])**2 + (obj[:,3]-output[:,3])**2
                    
     xy_loss=xy_loss+(obj[:,0]-output[:,0])**2 + (obj[:,1]-output[:,1])**2
 
-    class_loss=class_loss+(1-output[:,5])
+    #class_loss=class_loss+(1-output[:,5])
         
         #the confidense penalty could be either 1 or the actual IoU
-    confidence_loss =confidence_loss + (1-output[:,4])**2 
+    confidence_loss =confidence_loss -alpha*((1-output[:,4])**gamma)*torch.log(output[:,4])
 
-    no_obj_conf_loss =no_obj_conf_loss + (0-noobj_box[:,0])**2
+    no_obj_conf_loss =no_obj_conf_loss -(1-alpha)*(noobj_box[:,0]**gamma)*torch.log(1-noobj_box[:,0])
+    
+#     confidence_loss =confidence_loss +(1-output[:,4])**2
+
+#     no_obj_conf_loss =no_obj_conf_loss +(noobj_box[:,0])**2
         
-    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+class_loss.mean()+confidence_loss.mean()+0.5*no_obj_conf_loss.sum()/batch_size
+    total_loss=5*xy_loss.mean()+5*wh_loss.mean()+confidence_loss.sum()+no_obj_conf_loss.sum()/batch_size
     
     return total_loss
 

@@ -8,17 +8,6 @@ from torch.autograd import Variable
 import numpy as np
 
 
-
-def get_test_input(imgpath):
-    img = cv2.imread(imgpath)
-    img = cv2.resize(img, (544,544))          #Resize to the input dimension
-    img_ =  img[:,:,::-1].transpose((2,0,1))  # BGR -> RGB | H X W C -> C X H X W 
-    img_ = img_[np.newaxis,:,:,:]/255.0       #Add a channel at 0 (for batch) | Normalise
-    img_ = torch.from_numpy(img_).float()     #Convert to float
-    img_ = Variable(img_,requires_grad=True)                     # Convert to Variable
-    return img_
-
-
 class EmptyLayer(nn.Module):
     def __init__(self):
         super(EmptyLayer, self).__init__()
@@ -169,6 +158,7 @@ def create_modules(blocks):
 class Darknet(nn.Module):
     def __init__(self, cfgfile):
         super(Darknet, self).__init__()
+        torch.backends.cudnn.benchmark = True
         self.blocks = parse_cfg(cfgfile)
         self.net_info, self.module_list = create_modules(self.blocks)
         self.inp_dim = int (self.net_info["height"])
