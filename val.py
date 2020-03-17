@@ -6,8 +6,9 @@ import pandas as pd
 import time
 import sys
 import timeit
-from test_dataset import *
+from dataset import *
 import torchvision.ops.boxes as nms_box
+import helper as helper
 
 df = pd.read_csv('../test_annotations.csv')
 
@@ -78,7 +79,7 @@ print('Length of dataset is '+ str(dataset_len)+'\n')
 batch_size=1
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
-                        shuffle=False, num_workers=0)
+                        shuffle=False,collate_fn=helper.my_collate, num_workers=0)
 
 true_pos=0
 false_pos=0
@@ -87,13 +88,14 @@ iou_threshold=0
 confidence=0.7
 recall_counter=0
 
-for i_batch, sample_batched in enumerate(dataloader):
-    inp=sample_batched['image'].cuda()
+for images,targets in dataloader:
+    inp=images.cuda()
     raw_pred = model(inp, torch.cuda.is_available())
-    target=sample_batched['bbox_coord'].unsqueeze(0)
-    raw_pred=raw_pred.to(device='cuda')
+    targets,anchors,offset,strd,mask=helper.collapse_boxes(targets,pw_ph,cx_cy,stride)
     
+    targets=targets
 
+    raw_pred=raw_pred.to(device='cuda')
     true_pred=util.transform(raw_pred.clone(),pw_ph,cx_cy,stride)
     sorted_pred=torch.sort(true_pred[0,:,4],descending=True)
     pred_mask=sorted_pred[0]>confidence
@@ -101,8 +103,8 @@ for i_batch, sample_batched in enumerate(dataloader):
     indices=(sorted_pred[1][pred_mask])
     pred_final=true_pred[0,indices,:]
 #     pred_mask=true_pred[0,:,4].max() == true_pred[0,:,4]
-    
     pred_final_coord=util.get_abs_coord(pred_final.unsqueeze(-2))
+    
 #       df.pred_xmin[counter]=round(pred_final[:,:,0].item())
 #       df.pred_ymin[counter]=round(pred_final[:,:,1].item())
 #       df.pred_xmax[counter]=round(pred_final[:,:,2].item())
@@ -110,23 +112,20 @@ for i_batch, sample_batched in enumerate(dataloader):
     
     indices=nms_box.nms(pred_final_coord[0],pred_final[:,4],iou_threshold)
     pred_final_coord=pred_final_coord.to('cuda')
-    target=target.to('cuda')
-    
-    iou=util.bbox_iou(target,pred_final_coord[:,indices],CUDA=True)
-    true_pos=true_pos+(iou>=0.5).sum().item()
-    false_pos=false_pos+(iou<0.5).sum().item()
-    if((iou>=0.5).sum().item()>0):
-        recall_counter=recall_counter+1
-    #         df.iou[counter]=iou.item()
-    counter=counter+1
+    targets=targets.to('cuda')
+    pred_final_coord=(pred_final_coord[:,indices]).squeeze(0)
+    if(len(pred_final_coord.size())!=0):
+        iou=nms_box.box_iou(targets,pred_final_coord)
+        true_pos=true_pos+((iou>=0.5).sum(dim=0)).sum().item()
+        false_pos=false_pos+((iou<0.5).sum(dim=0)).sum().item()
+    print(iou)
+    counter=counter+targets.shape[0]
 print('precision')
 precision=true_pos/(true_pos+false_pos)
 print(precision)
 
 print('recall')
-recall=recall_counter/(counter)
+recall=true_pos/(counter)
 print(recall)
 f1=2*(precision*recall)/(precision+recall)
 print(f1)
-
-# df.to_csv('test+pred_annotations.csv')

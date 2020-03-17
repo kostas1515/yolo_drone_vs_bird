@@ -8,6 +8,7 @@ import time
 import sys
 import timeit
 import torch.autograd
+import helper as helper
 
 
 net = Darknet("../cfg/yolov3.cfg")
@@ -55,52 +56,6 @@ except FileNotFoundError:
     else:
         model=net
 
-def my_collate(batch):
-    write=0
-    boxes=[]
-    for el in batch:
-        if write==0:
-            pictures=el['image'].unsqueeze(-4)
-            write=1
-        else:
-            pictures=torch.cat((pictures,el['image'].unsqueeze(-4)),0)
-        boxes.append(el['bbox_coord'])
-
-    return pictures,boxes
-
-def collapse_boxes(boxes,pw_ph,cx_cy,stride):
-    write=0
-    mask=[]
-    for box in boxes:
-        if write==0:
-            targets=box
-            anchors=torch.stack([pw_ph for p in range(box.shape[0])], dim=0)
-            offset=torch.stack([cx_cy for p in range(box.shape[0])], dim=0)
-            strd=torch.stack([stride for p in range(box.shape[0])], dim=0)
-            write=1
-        else:
-            targets=torch.cat((targets,box),0)
-            
-            anchors=torch.cat((anchors,torch.stack([pw_ph for p in range(box.shape[0])], dim=0)),0)
-            offset=torch.cat((offset,torch.stack([cx_cy for p in range(box.shape[0])], dim=0)),0)
-            strd=torch.cat((strd,torch.stack([stride for p in range(box.shape[0])], dim=0)),0)
-        mask.append(box.shape[0])
-    return targets,anchors.squeeze(1),offset.squeeze(1),strd.squeeze(1),mask
-
-def expand_predictions(predictions,mask):
-    k=0
-    write=0
-    for i in mask:
-        if write==0:
-            new=torch.stack([predictions[k,:,:] for p in range(i)], dim=0)
-            write=1
-        else:
-            new=torch.cat((new,torch.stack([predictions[k,:,:] for p in range(i)], dim=0)),0)
-        k=k+1
-    
-    return new
-            
-    
 
 drone_size='all'
 print('training for '+ drone_size+'\n')
@@ -115,13 +70,13 @@ transformed_dataset=DroneDatasetCSV(csv_file='../annotations.csv',
     
 dataset_len=(len(transformed_dataset))
 print('Length of dataset is '+ str(dataset_len)+'\n')
-batch_size=16
+batch_size=24
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
-                        shuffle=True,collate_fn=my_collate, num_workers=0)
+                        shuffle=True,collate_fn=helper.my_collate, num_workers=4)
 
 
-optimizer = optim.Adam(model.parameters(), lr=0.00001, weight_decay=0.005)
+optimizer = optim.Adam(model.parameters(), lr=0.000001, weight_decay=0.005)
 epochs=150
 total_loss=0
 write=0
@@ -139,9 +94,9 @@ for e in range(epochs):
     for images,targets in dataloader:
         
         optimizer.zero_grad()
-        targets,anchors,offset,strd,mask=collapse_boxes(targets,pw_ph,cx_cy,stride)
+        targets,anchors,offset,strd,mask=helper.collapse_boxes(targets,pw_ph,cx_cy,stride)
         raw_pred = model(images, torch.cuda.is_available())
-        raw_pred=expand_predictions(raw_pred,mask)
+        raw_pred=helper.expand_predictions(raw_pred,mask)
         true_pred=util.transform(raw_pred.clone(),anchors,offset,strd)
         targets=targets.unsqueeze(-3).cuda()
         iou_mask,noobj_mask=util.get_responsible_masks(true_pred,targets,offset,strd,mask)

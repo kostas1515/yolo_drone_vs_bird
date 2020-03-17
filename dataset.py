@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
+import helper as helper
+import pandas as pd
 
 class DroneDatasetCSV(Dataset):
     """Face Landmarks dataset."""
@@ -27,14 +29,19 @@ class DroneDatasetCSV(Dataset):
         self.transform = transform
         
         if drone_size=='large':
-            self.dataset=self.dataset[self.dataset['width']*self.dataset['height']>=1000]
+            new=self.dataset.apply(lambda x: helper.create_test(x = x['x'], y = x['y'], w = x['width'], h = x['height'],upper=1E10,lower=1000),axis=1)
         elif drone_size=='medium':
-            self.dataset=self.dataset[(self.dataset['width']*self.dataset['height']>=100)&(self.dataset['width']*self.dataset['height']<1000)]
+            new=self.dataset.apply(lambda x: helper.create_test(x = x['x'], y = x['y'], w = x['width'], h = x['height'],upper=1000,lower=100),axis=1)
         elif drone_size=='small':
-            self.dataset=self.dataset[100>self.dataset['width']*self.dataset['height']]
+            new=self.dataset.apply(lambda x: helper.create_test(x = x['x'], y = x['y'], w = x['width'], h = x['height'],upper=100,lower=0),axis=1)
         elif drone_size=='large+medium':
-             self.dataset=self.dataset[100<=self.dataset['width']*self.dataset['height']]
-        
+             new=self.dataset.apply(lambda x: helper.create_test(x = x['x'], y = x['y'], w = x['width'], h = x['height'],upper=1E10,lower=100),axis=1)
+                
+        if drone_size!='all':
+            self.dataset['x'],self.dataset['y'],self.dataset['width'],self.dataset['height']=new[0],new[1],new[2],new[3]
+            nan_value = float("NaN")
+            self.dataset.replace("", nan_value, inplace=True)
+            self.dataset.dropna(inplace=True)
         
 
     def __len__(self):
@@ -46,6 +53,7 @@ class DroneDatasetCSV(Dataset):
 
         img_name = os.path.join(self.root_dir,
                                 self.dataset.iloc[idx, 1]+'_img'+self.dataset.iloc[idx, 3].split(':')[0]+'.jpg')
+
         image = io.imread(img_name)
         img_width,img_height= image.shape[1],image.shape[0]
         bbox_coord = list(map(lambda x: x.split(';'),self.dataset.iloc[idx, 4:]))
